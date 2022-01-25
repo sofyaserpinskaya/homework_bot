@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 import time
 
 from dotenv import load_dotenv
@@ -16,29 +15,11 @@ class RequestFailedException(Exception):
 
 load_dotenv()
 
-if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.DEBUG,
-        filename=(__file__ + '.log'),
-        filemode='w',
-        format=('%(asctime)s, %(levelname)s, '
-                '%(funcName)s, %(lineno)s, %(message)s')
-    )
-
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(funcName)s '
-        '- %(lineno)s - %(message)s'
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+TOKEN_NAMES = ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']
 
 
 RETRY_TIME = 600
@@ -55,9 +36,9 @@ VERDICTS = {
 
 MESSAGE_SENT_INFO = 'Сообщение "{message}" в Telegram отправлено.'
 SENDING_MESSAGE_ERROR = ('Не удалось отправить сообщение "{message}" '
-                         'в Telegram.')
+                         'в Telegram. - {error}')
 ERROR_MESSAGE = 'Сбой в работе программы: {error}.'
-API_ANSWER_ERROR = ('Ошибка при запросе к {endpoint} с авторизацией {headers} '
+API_ANSWER_ERROR = ('Ошибка при запросе к {url} с авторизацией {headers} '
                     'и параметрами {params}: {error}.')
 API_RESPONSE_ERROR = 'Формат ответа API отличается от ожидаемого. {error}'
 RESPONSE_KEY_ERROR = 'Ответ API не содержит ключ "homeworks".'
@@ -73,32 +54,35 @@ def send_message(bot, message):
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logging.info(MESSAGE_SENT_INFO.format(message=message))
-    except Exception:
-        logging.exception(SENDING_MESSAGE_ERROR.format(message=message))
-    else:
         return True
+    except Exception as error:
+        logging.error(SENDING_MESSAGE_ERROR.format(
+            message=message, error=error
+        ))
+        return False
 
 
 def get_api_answer(current_timestamp):
     """Делает запрос к API-сервису."""
     params = {'from_date': current_timestamp}
+    request_params = dict(url=ENDPOINT, headers=HEADERS, params=params)
     try:
-        response = requests.get(ENDPOINT, headers=HEADERS, params=params)
+        response = requests.get(**request_params)
     except requests.exceptions.RequestException as error:
-        raise Exception(API_ANSWER_ERROR.format(
+        raise ConnectionError(API_ANSWER_ERROR.format(
             endpoint=ENDPOINT, headers=HEADERS, params=params, error=error
         ))
     if response.status_code != 200:
         raise RequestFailedException(API_ANSWER_ERROR.format(
-            endpoint=ENDPOINT, headers=HEADERS, params=params,
-            error=response.status_code
+            error=response.status_code, **request_params
         ))
     result = response.json()
-    if ('error' or 'code') in result:
-        error = result.get('error') or result.get('code')
-        raise Exception(API_ANSWER_ERROR.format(
-            endpoint=ENDPOINT, headers=HEADERS, params=params, error=error
-        ))
+    for key in ['error', 'code']:
+        if key in result:
+            error = f'{key}: {result.get(key)}'
+            raise Exception(API_ANSWER_ERROR.format(
+                error=error, **request_params
+            ))
     return result
 
 
@@ -118,31 +102,30 @@ def check_response(response):
 
 def parse_status(homework):
     """Извлекает из информации о домашней работе статус этой работы."""
-    homework_name = homework['homework_name']
+    name = homework['homework_name']
     status = homework['status']
     if status not in VERDICTS:
-        raise KeyError(WRONG_STATUS_ERROR.format(
-            homework_name=homework_name, status=status
+        raise ValueError(WRONG_STATUS_ERROR.format(
+            homework_name=name, status=status
         ))
-    return (STATUS_VERDICT.format(
-        homework_name=homework_name, verdict=VERDICTS[status]
-    ))
+    return STATUS_VERDICT.format(
+        homework_name=name, verdict=VERDICTS[status]
+    )
 
 
 def check_tokens():
     """Проверяет доступность переменных окружения."""
-    for name in ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']:
-        if globals()[name] is None:
-            logging.critical(TOKENS_ERROR.format(name=name))
-    if (PRACTICUM_TOKEN or TELEGRAM_TOKEN or TELEGRAM_CHAT_ID) is None:
+    MISSED_TOKENS = [name for name in TOKEN_NAMES if globals()[name] is None]
+    if MISSED_TOKENS != []:
+        logging.critical(TOKENS_ERROR.format(name=MISSED_TOKENS))
         return False
     return True
 
 
 def main():
     """Основная логика работы бота."""
-    if check_tokens() is False:
-        sys.exit()
+    if not check_tokens():
+        return
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
     errors = ''
@@ -150,21 +133,30 @@ def main():
         try:
             response = get_api_answer(current_timestamp)
             homeworks = check_response(response)
-            if homeworks is not None:
+            current_timestamp = (response.get('current_date', False)
+                                 or current_timestamp)
+            if homeworks:
                 homework = homeworks[0]
                 send_message(bot, parse_status(homework))
-                current_timestamp = response.get(
-                    'current_date', default=current_timestamp
-                )
+                errors = ''
         except Exception as error:
             message = ERROR_MESSAGE.format(error=error)
             logging.error(message)
             if message != errors:
-                send_message(bot, message)
-                if True:
+                if send_message(bot, message):
                     errors = message
         time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format=('%(asctime)s, %(levelname)s, '
+                '%(funcName)s, %(lineno)s, %(message)s'),
+        handlers=[
+            logging.FileHandler((__file__ + '.log'), mode='w'),
+            logging.StreamHandler()
+        ]
+    )
+
     main()
