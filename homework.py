@@ -70,7 +70,7 @@ def get_api_answer(current_timestamp):
         response = requests.get(**request_params)
     except requests.exceptions.RequestException as error:
         raise ConnectionError(API_ANSWER_ERROR.format(
-            endpoint=ENDPOINT, headers=HEADERS, params=params, error=error
+            error=error, **request_params
         ))
     if response.status_code != 200:
         raise RequestFailedException(API_ANSWER_ERROR.format(
@@ -79,9 +79,8 @@ def get_api_answer(current_timestamp):
     result = response.json()
     for key in ['error', 'code']:
         if key in result:
-            error = f'{key}: {result.get(key)}'
             raise Exception(API_ANSWER_ERROR.format(
-                error=error, **request_params
+                error={key: result.get(key)}, **request_params
             ))
     return result
 
@@ -115,9 +114,9 @@ def parse_status(homework):
 
 def check_tokens():
     """Проверяет доступность переменных окружения."""
-    MISSED_TOKENS = [name for name in TOKEN_NAMES if globals()[name] is None]
-    if MISSED_TOKENS != []:
-        logging.critical(TOKENS_ERROR.format(name=MISSED_TOKENS))
+    missed_tokens = [name for name in TOKEN_NAMES if globals()[name] is None]
+    if missed_tokens:
+        logging.critical(TOKENS_ERROR.format(name=missed_tokens))
         return False
     return True
 
@@ -125,7 +124,7 @@ def check_tokens():
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        return
+        raise Exception
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
     errors = ''
@@ -133,18 +132,17 @@ def main():
         try:
             response = get_api_answer(current_timestamp)
             homeworks = check_response(response)
-            current_timestamp = (response.get('current_date', False)
-                                 or current_timestamp)
+            current_timestamp = (response.get(
+                'current_date', current_timestamp
+            ))
             if homeworks:
-                homework = homeworks[0]
-                send_message(bot, parse_status(homework))
+                send_message(bot, parse_status(homeworks[0]))
                 errors = ''
         except Exception as error:
             message = ERROR_MESSAGE.format(error=error)
             logging.error(message)
-            if message != errors:
-                if send_message(bot, message):
-                    errors = message
+            if message != errors and send_message(bot, message):
+                errors = message
         time.sleep(RETRY_TIME)
 
 
