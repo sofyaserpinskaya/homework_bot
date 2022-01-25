@@ -13,13 +13,19 @@ class RequestFailedException(Exception):
     pass
 
 
+class ApiAnswerException(Exception):
+    """Ошибка в ответе от API-сервиса."""
+
+    pass
+
+
 load_dotenv()
 
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-TOKEN_NAMES = ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']
+TOKENS = ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']
 
 
 RETRY_TIME = 600
@@ -79,7 +85,7 @@ def get_api_answer(current_timestamp):
     result = response.json()
     for key in ['error', 'code']:
         if key in result:
-            raise Exception(API_ANSWER_ERROR.format(
+            raise ApiAnswerException(API_ANSWER_ERROR.format(
                 error={key: result.get(key)}, **request_params
             ))
     return result
@@ -114,7 +120,7 @@ def parse_status(homework):
 
 def check_tokens():
     """Проверяет доступность переменных окружения."""
-    missed_tokens = [name for name in TOKEN_NAMES if globals()[name] is None]
+    missed_tokens = [name for name in TOKENS if globals()[name] is None]
     if missed_tokens:
         logging.critical(TOKENS_ERROR.format(name=missed_tokens))
         return False
@@ -136,8 +142,8 @@ def main():
                 'current_date', current_timestamp
             ))
             if homeworks:
-                send_message(bot, parse_status(homeworks[0]))
-                errors = ''
+                if send_message(bot, parse_status(homeworks[0])):
+                    errors = ''
         except Exception as error:
             message = ERROR_MESSAGE.format(error=error)
             logging.error(message)
