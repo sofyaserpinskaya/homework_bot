@@ -7,13 +7,13 @@ import requests
 import telegram
 
 
-class RequestFailedException(Exception):
+class RequestFailedError(Exception):
     """Неудачный запрос."""
 
     pass
 
 
-class ApiAnswerException(Exception):
+class ApiAnswerError(Exception):
     """Ошибка в ответе от API-сервиса."""
 
     pass
@@ -79,13 +79,13 @@ def get_api_answer(current_timestamp):
             error=error, **request_params
         ))
     if response.status_code != 200:
-        raise RequestFailedException(API_ANSWER_ERROR.format(
+        raise RequestFailedError(API_ANSWER_ERROR.format(
             error=response.status_code, **request_params
         ))
     result = response.json()
     for key in ['error', 'code']:
         if key in result:
-            raise ApiAnswerException(API_ANSWER_ERROR.format(
+            raise ApiAnswerError(API_ANSWER_ERROR.format(
                 error={key: result.get(key)}, **request_params
             ))
     return result
@@ -123,14 +123,13 @@ def check_tokens():
     missed_tokens = [name for name in TOKENS if globals()[name] is None]
     if missed_tokens:
         logging.critical(TOKENS_ERROR.format(name=missed_tokens))
-        return False
-    return True
+    return not missed_tokens
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        raise Exception
+        raise ValueError
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
     errors = ''
@@ -138,9 +137,9 @@ def main():
         try:
             response = get_api_answer(current_timestamp)
             homeworks = check_response(response)
-            current_timestamp = (response.get(
+            current_timestamp = response.get(
                 'current_date', current_timestamp
-            ))
+            )
             if homeworks:
                 if send_message(bot, parse_status(homeworks[0])):
                     errors = ''
