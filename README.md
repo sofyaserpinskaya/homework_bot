@@ -10,7 +10,9 @@
 
 ### Автор
 
-[Софья Серпинская](https://github.com/sofyaserpinskaya)
+homework.py - [Софья Серпинская](https://github.com/sofyaserpinskaya)
+
+tests - [Яндекс.Практикум](https://github.com/yandex-praktikum)
 
 ### Технологии
 
